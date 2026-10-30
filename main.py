@@ -1,6 +1,3 @@
-SUPABASE_URL = "https://xytdcaocliqyyxblwjpt.supabase.co"
-SUPABASE_KEY = "sb_publishable_QXOQdKpab_PUmI4_NtN7PQ_n8-QX9W8"
-
 import asyncio
 import json
 import pygame
@@ -43,8 +40,8 @@ def save_top_score(score):
 # ---- Worldwide top 10 (Supabase) ----
 # Paste your project's URL and publishable/anon key here (Supabase -> Project Settings -> API Keys).
 # The publishable/anon key is safe to share; never put the secret/service_role key here.
-SUPABASE_URL = ""
-SUPABASE_KEY = ""
+SUPABASE_URL = "https://xytdcaocliqyyxblwjpt.supabase.co"
+SUPABASE_KEY = "sb_publishable_QXOQdKpab_PUmI4_NtN7PQ_n8-QX9W8"
 LEADERBOARD = WEB and SUPABASE_URL != "" and SUPABASE_KEY != ""
 NICK_KEY = 'snake_rainbow_nickname'
 NICK_MAX = 12
