@@ -1,4 +1,8 @@
+SUPABASE_URL = "https://xytdcaocliqyyxblwjpt.supabase.co"
+SUPABASE_KEY = "sb_publishable_QXOQdKpab_PUmI4_NtN7PQ_n8-QX9W8"
+
 import asyncio
+import json
 import pygame
 import random
 import pathlib
@@ -32,6 +36,98 @@ def save_top_score(score):
             platform.window.localStorage.setItem(STORAGE_KEY, str(score))
         else:
             PATH.write_text(str(score))
+    except Exception:
+        pass
+
+
+# ---- Worldwide top 10 (Supabase) ----
+# Paste your project's URL and publishable/anon key here (Supabase -> Project Settings -> API Keys).
+# The publishable/anon key is safe to share; never put the secret/service_role key here.
+SUPABASE_URL = ""
+SUPABASE_KEY = ""
+LEADERBOARD = WEB and SUPABASE_URL != "" and SUPABASE_KEY != ""
+NICK_KEY = 'snake_rainbow_nickname'
+NICK_MAX = 12
+
+# The browser does the network calls; Python just reads the results each frame,
+# so the game never freezes while waiting for the internet.
+LEADERBOARD_JS = """
+(function (url, key) {
+  var headers = { apikey: key, 'Content-Type': 'application/json' };
+  if (key.indexOf('eyJ') === 0) headers.Authorization = 'Bearer ' + key;
+  window.snakeTop = '[]';
+  window.snakeTopStatus = 'loading';
+  window.snakeLoadTop = function () {
+    window.snakeTopStatus = 'loading';
+    fetch(url + '/rest/v1/scores?select=nickname,score&order=score.desc,created_at.asc&limit=10', { headers: headers })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (rows) { window.snakeTop = JSON.stringify(rows); window.snakeTopStatus = 'ok'; })
+      .catch(function (e) { console.log('leaderboard load failed', e); window.snakeTopStatus = 'error'; });
+  };
+  window.snakeSubmit = function (name, score) {
+    window.snakeTopStatus = 'loading';
+    fetch(url + '/rest/v1/scores', {
+      method: 'POST',
+      headers: Object.assign({ Prefer: 'return=minimal' }, headers),
+      body: JSON.stringify({ nickname: name, score: score })
+    })
+      .then(function (r) { if (!r.ok) console.log('score submit failed: HTTP ' + r.status); })
+      .catch(function (e) { console.log('score submit failed', e); })
+      .finally(function () { window.snakeLoadTop(); });
+  };
+  window.snakeLoadTop();
+})(%s, %s);
+"""
+
+
+def js(code):
+    try:
+        import platform
+        return platform.window.eval(code)
+    except Exception as e:
+        print("leaderboard error:", e)
+        return None
+
+
+def leaderboard_start():
+    if LEADERBOARD:
+        js(LEADERBOARD_JS % (json.dumps(SUPABASE_URL.rstrip('/')), json.dumps(SUPABASE_KEY)))
+
+
+def leaderboard_refresh():
+    if LEADERBOARD:
+        js("window.snakeLoadTop && window.snakeLoadTop()")
+
+
+def leaderboard_submit(name, score):
+    if LEADERBOARD:
+        js("window.snakeSubmit(%s, %d)" % (json.dumps(name), int(score)))
+
+
+def leaderboard_get():
+    # returns (status, rows) where status is 'loading', 'ok' or 'error'
+    try:
+        import platform
+        status = str(platform.window.snakeTopStatus)
+        rows = json.loads(str(platform.window.snakeTop))
+        return status, rows
+    except Exception:
+        return 'error', []
+
+
+def load_nickname():
+    try:
+        import platform
+        value = platform.window.localStorage.getItem(NICK_KEY)
+        return str(value)[:NICK_MAX] if value else ""
+    except Exception:
+        return ""
+
+
+def save_nickname(name):
+    try:
+        import platform
+        platform.window.localStorage.setItem(NICK_KEY, name)
     except Exception:
         pass
 
@@ -99,8 +195,43 @@ text6_rect.center = screen.get_rect().center
 font4 = pygame.font.SysFont(None,25)
 
 
+def draw_top10(columns, top, font, color):
+    # columns: list of (x, y) where each column of names starts; rows are split evenly between them
+    status, rows = leaderboard_get()
+    x, y = columns[0]
+    title = font.render("WORLD TOP 10", True, color)
+    screen.blit(title, title.get_rect(midbottom=(WIDTH//2, top)))
+    if status == 'loading' and not rows:
+        msg = font.render("loading...", True, color)
+        screen.blit(msg, (x, y))
+        return
+    if status == 'error' and not rows:
+        msg = font.render("offline - couldn't load the ranking", True, color)
+        screen.blit(msg, (x, y))
+        return
+    if not rows:
+        msg = font.render("no scores yet - be the first!", True, color)
+        screen.blit(msg, (x, y))
+        return
+    per_col = (10 + len(columns) - 1) // len(columns)
+    line_h = font.get_linesize() + 4
+    for i, row in enumerate(rows[:10]):
+        cx, cy = columns[i // per_col]
+        cy = cy + (i % per_col) * line_h
+        name = str(row.get('nickname', '?'))[:NICK_MAX]
+        rank = font.render(f"{i+1}.", True, color)
+        screen.blit(rank, rank.get_rect(topright=(cx + 30, cy)))
+        screen.blit(font.render(name, True, color), (cx + 40, cy))
+        score = font.render(str(row.get('score', 0)), True, color)
+        screen.blit(score, score.get_rect(topright=(cx + 260, cy)))
+
+
 async def main():
     top_score = load_top_score()
+    leaderboard_start()
+    nickname = load_nickname()
+    entering_name = False
+    name_asked = False
     answer = 1
     sp_x = COL//2
     sp_y = ROW//2
@@ -145,6 +276,21 @@ async def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            if event.type == pygame.KEYDOWN and entering_name == True:
+                # typing a nickname: no other keys do anything until Enter or Esc
+                if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
+                    nickname = nickname.strip()
+                    if nickname != "":
+                        save_nickname(nickname)
+                        leaderboard_submit(nickname, points)
+                        entering_name = False
+                elif event.key == pygame.K_ESCAPE:
+                    entering_name = False
+                elif event.key == pygame.K_BACKSPACE:
+                    nickname = nickname[:-1]
+                elif len(nickname) < NICK_MAX and event.unicode and (event.unicode.isalnum() or event.unicode in " _-."):
+                    nickname = nickname + event.unicode
+                continue
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_UP or event.key == pygame.K_w:
                     dx = 0
@@ -190,6 +336,9 @@ async def main():
                     time7 = 0
                     block_accum = 0
                     top_score = load_top_score()
+                    name_asked = False
+                    entering_name = False
+                    leaderboard_refresh()
 
                 if event.key == pygame.K_1:
                     answer = 1
@@ -235,6 +384,8 @@ async def main():
             screen.fill('white')
             screen.blit(text3, text3_rect)
             screen.blit(text4, text4_rect)
+            if LEADERBOARD:
+                draw_top10([(WIDTH//2 - 330, 340), (WIDTH//2 + 50, 340)], 330, font4, 'black')
         else:
             if game_over == False:
                 if game_pause == False:
@@ -457,20 +608,38 @@ async def main():
                 time = time + 1/speed
 
             else:
+                if name_asked == False:
+                    name_asked = True
+                    entering_name = LEADERBOARD and points > 0
                 text2 = font2.render(f"You earned {points} points in {time:.2f} seconds!",True,'white')
                 text2_rect = text2.get_rect()
-                text2_rect.center = screen.get_rect().center
-                text2_rect.centery = text2_rect.centery + 100
                 screen.fill('black')
-                screen.blit(text1,text1_rect)
-                screen.blit(text2,text2_rect)
-                screen.blit(text5, text5_rect)
+                if LEADERBOARD and entering_name == False:
+                    # after the name step: show the world ranking
+                    text2_rect.midtop = (WIDTH//2, 15)
+                    screen.blit(text2,text2_rect)
+                    draw_top10([(WIDTH//2 - 150, 110)], 100, font2, 'white')
+                    screen.blit(text5, text5_rect)
+                else:
+                    text2_rect.center = screen.get_rect().center
+                    text2_rect.centery = text2_rect.centery + 100
+                    screen.blit(text1,text1_rect)
+                    screen.blit(text2,text2_rect)
+                    if entering_name == True:
+                        cursor = "_" if pygame.time.get_ticks() // 400 % 2 == 0 else " "
+                        prompt = font3.render(f"Your nickname for the world ranking: {nickname}{cursor}", True, 'yellow')
+                        screen.blit(prompt, prompt.get_rect(center=(WIDTH//2, 405)))
+                        hint = font4.render("Enter = send     Esc = skip", True, 'grey')
+                        screen.blit(hint, hint.get_rect(center=(WIDTH//2, 440)))
+                    else:
+                        screen.blit(text5, text5_rect)
                 if top_score < points:
                     save_top_score(points)
                     top_score = points
 
         pygame.display.flip()
-        clock.tick(speed) # baby=1, kiddie=3, super easy=5, easy=8, medium=10, hard=15, super hard=20, insane=25, impossible=30
+        # menus and the game-over screen run at 30 fps so typing feels instant
+        clock.tick(30 if game_start == False or game_over == True else speed) # baby=1, kiddie=3, super easy=5, easy=8, medium=10, hard=15, super hard=20, insane=25, impossible=30
         await asyncio.sleep(0)  # hands control back to the browser each frame; pygbag needs this
 
     pygame.quit()
